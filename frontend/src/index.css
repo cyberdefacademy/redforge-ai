@@ -1,0 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+:root { --background: 222 47% 6%; --foreground: 0 0% 98%; --card: 222 30% 10%; --card-foreground: 0 0% 98%; --primary: 24 94% 53%; --primary-foreground: 0 0% 98%; --muted: 222 20% 16%; --muted-foreground: 0 0% 60%; --border: 222 20% 18%; }
+* { border-color: hsl(var(--border)); }
+body { font-family: ui-sans-serif, system-ui, -apple-system; }
+.scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: #2a3347; border-radius: 4px; }

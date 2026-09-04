@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+node_modules/
+dist/
+.env
+*.log
+*.sqlite
+evidence/artifacts/*
+!.gitkeep
+backend/alembic/__pycache__/
+frontend/.vite/
+.DS_Store
+coverage/
+.pytest_cache/
