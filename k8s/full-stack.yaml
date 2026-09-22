@@ -1,0 +1,171 @@
+# REDFORGE AI — production K8s full stack (api + frontend + redis + migration + TLS + autoscaling).
+# Apply order: kubectl apply -f k8s/full-stack.yaml ; then provision Secret redforge-secrets (see secrets.example.yaml).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: redforge
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redforge-evidence
+  namespace: redforge
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 20Gi}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-pvc
+  namespace: redforge
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 30Gi}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: redforge
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 5Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redforge-redis
+  namespace: redforge
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: redforge-redis}}
+  template:
+    metadata: {labels: {app: redforge-redis}}
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        args: ["redis-server", "--appendonly", "yes"]
+        ports: [{containerPort: 6379}]
+        volumeMounts: [{name: data, mountPath: /data}]
+        resources: {requests: {cpu: "100m", memory: "128Mi"}, limits: {cpu: "500m", memory: "512Mi"}}
+        readinessProbe: {exec: {command: ["redis-cli", "ping"]}, periodSeconds: 10}
+        livenessProbe: {exec: {command: ["redis-cli", "ping"]}, periodSeconds: 20}
+        securityContext: {runAsNonRoot: true, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, seccompProfile: {type: RuntimeDefault}, capabilities: {drop: [ALL]}}
+      volumes: [{name: data, persistentVolumeClaim: {claimName: redis-data}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: redis, namespace: redforge}
+spec:
+  selector: {app: redforge-redis}
+  ports: [{port: 6379, targetPort: 6379}]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redforge-migrate
+  namespace: redforge
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: migrate
+        image: redforge-ai:api
+        command: ["alembic", "upgrade", "head"]
+        env:
+        - {name: DATABASE_URL, valueFrom: {secretKeyRef: {name: redforge-secrets, key: db-url}}}
+        - {name: JWT_SECRET, valueFrom: {secretKeyRef: {name: redforge-secrets, key: jwt-secret}}}
+        - {name: ENV, value: "production"}
+        securityContext: {runAsNonRoot: true, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, seccompProfile: {type: RuntimeDefault}, capabilities: {drop: [ALL]}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redforge-frontend
+  namespace: redforge
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: redforge-frontend}}
+  template:
+    metadata: {labels: {app: redforge-frontend}}
+    spec:
+      containers:
+      - name: frontend
+        image: redforge-ai:frontend
+        ports: [{containerPort: 80}]
+        resources: {requests: {cpu: "100m", memory: "128Mi"}, limits: {cpu: "500m", memory: "256Mi"}}
+        readinessProbe: {httpGet: {path: /, port: 80}, periodSeconds: 10}
+        livenessProbe: {httpGet: {path: /, port: 80}, periodSeconds: 20}
+        securityContext: {runAsNonRoot: true, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, seccompProfile: {type: RuntimeDefault}, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: redforge-frontend, namespace: redforge}
+spec:
+  selector: {app: redforge-frontend}
+  ports: [{port: 80, targetPort: 80}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: redforge
+  namespace: redforge
+  annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts: [redforge.example.com]
+    secretName: redforge-tls
+  rules:
+  - host: redforge.example.com
+    http:
+      paths:
+      - {path: /api, pathType: Prefix, backend: {service: {name: redforge-api, port: {number: 8000}}}}
+      - {path: /ws, pathType: Prefix, backend: {service: {name: redforge-api, port: {number: 8000}}}}
+      - {path: /, pathType: Prefix, backend: {service: {name: redforge-frontend, port: {number: 80}}}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redforge-default-deny
+  namespace: redforge
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+  - from:
+    - podSelector: {}
+    - namespaceSelector: {matchLabels: {name: ingress-nginx}}
+    ports: [{port: 8000}, {port: 80}, {port: 6379}]
+  egress:
+  - to: [{podSelector: {}}]
+    ports: [{port: 5432}, {port: 6379}, {port: 8000}, {port: 11434}]
+  - to: {}
+    ports: [{port: 53, protocol: UDP}, {port: 443, protocol: TCP}]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: redforge-api
+  namespace: redforge
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: redforge-api}
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - {type: Resource, resource: {name: cpu, target: {type: Utilization, averageUtilization: 70}}}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redforge-api
+  namespace: redforge
+spec:
+  minAvailable: 1
+  selector: {matchLabels: {app: redforge-api}}

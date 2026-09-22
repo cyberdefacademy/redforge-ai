@@ -55,10 +55,16 @@ async def recon_ingest(eng_id: str, payload: dict, db: AsyncSession = Depends(ge
     for f in norm.get("findings", []):
         db.add(Finding(engagement_id=eng_id, title=f.get("title","finding")[:500], severity=f.get("severity","medium"), asset=f.get("asset", target), confidence="detected"))
         created.append({"finding": f.get("title")})
+    for t in norm.get("tech", []):
+        stack = (t.get("stack") or "").strip()
+        if stack:
+            db.add(Finding(engagement_id=eng_id, title=f"Tech stack: {stack[:400]}", severity="info", asset=t.get("url", target), confidence="detected"))
+            created.append({"tech": stack[:120]})
     for p in norm.get("paths", []):
         db.add(Finding(engagement_id=eng_id, title=f"Path {p['path']}", severity="info", asset=target, confidence="detected"))
     for v in norm.get("vulns", []):
         db.add(Finding(engagement_id=eng_id, title=v["title"][:500], severity=v.get("severity","medium"), asset=target, confidence="detected"))
+        created.append({"vuln": v["title"][:120]})
     await db.commit()
     return {"normalized": norm, "evidence_sha256": sha, "created": created}
 

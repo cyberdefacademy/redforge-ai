@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redforge-api
+  namespace: redforge
 spec:
   replicas: 2
   selector:
@@ -10,28 +11,40 @@ spec:
     metadata:
       labels: {app: redforge-api}
     spec:
+      serviceAccountName: redforge-api
       containers:
       - name: api
         image: redforge-ai:api
+        imagePullPolicy: IfNotPresent
         ports: [{containerPort: 8000}]
         env:
+        - {name: ENV, value: "production"}
         - {name: DATABASE_URL, valueFrom: {secretKeyRef: {name: redforge-secrets, key: db-url}}}
         - {name: JWT_SECRET, valueFrom: {secretKeyRef: {name: redforge-secrets, key: jwt-secret}}}
+        - {name: SEED_ADMIN_PASSWORD, valueFrom: {secretKeyRef: {name: redforge-secrets, key: seed-admin-password, optional: true}}}
         - {name: OLLAMA_URL, value: "http://ollama:11434"}
+        - {name: EVIDENCE_DIR, value: "/var/lib/redforge/evidence"}
         resources: {requests: {cpu: "250m", memory: "512Mi"}, limits: {cpu: "1000m", memory: "1Gi"}}
-        readinessProbe: {httpGet: {path: /, port: 8000}, periodSeconds: 10}
-        securityContext: {runAsNonRoot: true, allowPrivilegeEscalation: false}
+        readinessProbe: {httpGet: {path: /healthz, port: 8000}, periodSeconds: 10}
+        livenessProbe: {httpGet: {path: /healthz, port: 8000}, periodSeconds: 20}
+        securityContext: {runAsNonRoot: true, runAsUser: 999, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, seccompProfile: {type: RuntimeDefault}, capabilities: {drop: [ALL]}}
+        volumeMounts: [{name: evidence, mountPath: /var/lib/redforge/evidence}, {name: tmp, mountPath: /tmp}]
+      volumes: [{name: evidence, persistentVolumeClaim: {claimName: redforge-evidence}}, {name: tmp, emptyDir: {}}]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: redforge-api, namespace: redforge}
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: redforge-api}
+metadata: {name: redforge-api, namespace: redforge}
 spec:
   selector: {app: redforge-api}
   ports: [{port: 8000, targetPort: 8000}]
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: redforge-ollama}
+metadata: {name: redforge-ollama, namespace: redforge}
 spec:
   replicas: 1
   selector: {matchLabels: {app: ollama}}
@@ -42,5 +55,9 @@ spec:
       - name: ollama
         image: ollama/ollama:latest
         ports: [{containerPort: 11434}]
+        resources: {requests: {cpu: "500m", memory: "2Gi"}, limits: {cpu: "4", memory: "8Gi"}}
+        readinessProbe: {httpGet: {path: /, port: 11434}, periodSeconds: 15}
+        livenessProbe: {httpGet: {path: /, port: 11434}, periodSeconds: 30}
+        securityContext: {runAsNonRoot: false, allowPrivilegeEscalation: false}
         volumeMounts: [{name: data, mountPath: /root/.ollama}]
       volumes: [{name: data, persistentVolumeClaim: {claimName: ollama-pvc}}]

@@ -14,3 +14,18 @@ frontend/.vite/
 .DS_Store
 coverage/
 .pytest_cache/
+# Secrets / TLS — never commit real values
+*.pem
+*.key
+*.crt
+*.p12
+k8s/secrets.yaml
+k8s/*-secret.yaml
+secrets/*.yaml
+secrets/*.json
+# Runtime data
+*.rdb
+dump.rdb
+.coverage
+htmlcov/
+dist/

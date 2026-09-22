@@ -1,0 +1,61 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest ruff bandit
+      - name: Lint
+        run: ruff check backend
+      - name: Security scan
+        run: bandit -r backend/app -ll -q
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+      - name: Unit + security tests
+        run: |
+          cd backend && python -m pytest ../tests/unit ../tests/security -v
+      - name: Integration tests (postgres+redis services)
+        run: |
+          cd backend && python -m pytest ../tests/integration -v
+        continue-on-error: true
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: redforge
+          POSTGRES_USER: redforge
+          POSTGRES_PASSWORD: ci_test_only
+        ports: ["5432:5432"]
+        options: >- --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >- --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install + typecheck + build
+        run: |
+          cd frontend && npm ci --no-audit --no-fund && npx tsc --noEmit && npm run build
+  compose-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose config
+        run: docker compose -f docker-compose.yml config -q && docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q

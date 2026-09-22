@@ -1,0 +1,91 @@
+# REDFORGE AI — production overlay.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+# Requires .env with real JWT_SECRET / POSTGRES_PASSWORD / SEED_ADMIN_PASSWORD.
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-}"]
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 512M}
+
+  api:
+    build: ./backend
+    environment:
+      ENV: production
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-15}
+      JWT_REFRESH_EXPIRE_DAYS: ${JWT_REFRESH_EXPIRE_DAYS:-7}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://redforge.local}
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      ENABLE_EXTERNAL_LLM: ${ENABLE_EXTERNAL_LLM:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
+      CUSTOM_LLM_BASE_URL: ${CUSTOM_LLM_BASE_URL:-}
+      CUSTOM_LLM_API_KEY: ${CUSTOM_LLM_API_KEY:-}
+      PROVIDER_DEFAULT: ${PROVIDER_DEFAULT:-ollama-local}
+      CLOUD_DEFAULT_MODEL: ${CLOUD_DEFAULT_MODEL:-gpt-4o-mini}
+      EVIDENCE_DIR: /var/lib/redforge/evidence
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@redforge.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_ADMIN_ON_BOOT: ${SEED_ADMIN_ON_BOOT:-true}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+    volumes:
+      - evidencedata:/var/lib/redforge/evidence
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')\""]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits: {cpus: "2", memory: 1G}
+        reservations: {cpus: "0.5", memory: 512M}
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 256M}
+
+volumes:
+  redisdata: {}
+  evidencedata: {}

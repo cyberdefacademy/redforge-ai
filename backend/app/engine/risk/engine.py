@@ -6,16 +6,19 @@ class RiskLevel(str, Enum):
     HIGH = "high"
     CRITICAL = "critical"
 
-# Risk assignment per tool category / action
+# Risk assignment per tool category / action.
+# NOTE: high-request-volume scanners are medium (approval-gated) even though
+# they are "read-only": a full nikto/nuclei/dir-bust run sends thousands of
+# requests and has been observed crashing fragile apps (DoS by volume).
 RISK_MAP = {
     "nmap": "low",
     "masscan": "medium",
     "amass": "low",
     "subfinder": "low",
-    "nuclei": "low",
-    "gobuster": "low",
-    "feroxbuster": "low",
-    "nikto": "low",
+    "nuclei": "medium",
+    "gobuster": "medium",
+    "feroxbuster": "medium",
+    "nikto": "medium",
     "whatweb": "low",
     "hydra": "high",
     "sqlmap": "high",
@@ -23,10 +26,11 @@ RISK_MAP = {
     "zap": "medium",
 }
 
-APPROVAL_REQUIRED = {"medium": False, "high": True, "critical": True, "low": False}
+APPROVAL_REQUIRED = {"medium": True, "high": True, "critical": True, "low": False}
 
 def evaluate_risk(tool: str, target: str = "", mode: str = "enumeration") -> dict:
-    base = RISK_MAP.get(tool.lower(), "medium")
+    base = RISK_MAP.get(tool.lower(), "high")
+    # Unknown tools fail-closed to high (require approval).
     # Escalate if intrusive mode
     if mode in ("intrusive","exploit","bruteforce"):
         if base == "low": base = "medium"

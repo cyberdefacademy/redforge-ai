@@ -45,12 +45,16 @@ async def get_engagement(eng_id: str, db: AsyncSession = Depends(get_db), user: 
 
 @router.put("/{eng_id}", response_model=EngagementOut)
 async def update_engagement(eng_id: str, payload: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role not in ("administrator", "red_team_lead"):
+        raise HTTPException(status_code=403, detail="Only lead/admin can update engagements")
     result = await db.execute(select(Engagement).where(Engagement.id == eng_id))
     eng = result.scalar_one_or_none()
     if not eng:
         raise HTTPException(status_code=404, detail="Not found")
-    for k,v in payload.items():
-        if hasattr(eng, k) and v is not None:
+    # Allowlist mutable fields (prevents operator_id/status privilege escalation via mass-assignment).
+    for k in ("name", "customer", "description", "assessment_type", "start_date", "end_date"):
+        v = payload.get(k)
+        if v is not None:
             setattr(eng, k, v)
     await db.commit()
     await db.refresh(eng)
@@ -58,8 +62,8 @@ async def update_engagement(eng_id: str, payload: dict, db: AsyncSession = Depen
 
 @router.post("/{eng_id}/authorize")
 async def authorize(eng_id: str, payload: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    if user.role not in ("administrator","red_team_lead","operator"):
-        raise HTTPException(status_code=403, detail="Not allowed")
+    if user.role not in ("administrator","red_team_lead"):
+        raise HTTPException(status_code=403, detail="Only lead/admin can authorize engagements")
     result = await db.execute(select(Authorization).where(Authorization.engagement_id == eng_id))
     auth = result.scalar_one_or_none()
     if not auth:
@@ -84,6 +88,8 @@ async def authorize(eng_id: str, payload: dict, db: AsyncSession = Depends(get_d
 
 @router.post("/{eng_id}/kill")
 async def kill(eng_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role not in ("administrator", "red_team_lead", "operator"):
+        raise HTTPException(status_code=403, detail="Not allowed")
     activate_kill_switch(eng_id, reason=f"Triggered by {user.email}")
     _audit(db, eng_id, user.email, "emergency_stop")
     await db.commit()
@@ -93,7 +99,9 @@ async def kill(eng_id: str, db: AsyncSession = Depends(get_db), user: User = Dep
 async def resume(eng_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     if user.role not in ("administrator","red_team_lead"):
         raise HTTPException(status_code=403, detail="Only lead/admin can resume")
-    clear_kill_switch()
+    clear_kill_switch(eng_id)
+    _audit(db, eng_id, user.email, "resume_engagement")
+    await db.commit()
     return {"status": "resumed"}
 
 # Scope

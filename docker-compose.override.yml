@@ -1,0 +1,12 @@
+services:
+  # Dev-only overrides: live-reload + host service access.
+  # No secrets here — all values come from ${...} with safe defaults.
+  # Loaded automatically by `docker compose up` (dev). Prod uses explicit -f flags.
+  api:
+    volumes:
+      - ./backend:/app
+    environment:
+      POSTGRES_HOST: host.docker.internal
+      POSTGRES_PORT: 5432
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

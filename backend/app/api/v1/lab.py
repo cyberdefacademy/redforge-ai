@@ -40,10 +40,13 @@ async def list_approvals(eng_id: str, db: AsyncSession = Depends(get_db), user: 
 
 @router.post("/tasks/{task_id}/approve")
 async def approve(task_id: str, payload: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    if user.role not in ("administrator","red_team_lead","operator"):
-        raise HTTPException(403, "Not allowed")
+    if user.role not in ("administrator","red_team_lead"):
+        raise HTTPException(status_code=403, detail="Only lead/admin can approve high-risk tasks")
     t = (await db.execute(select(Task).where(Task.id==task_id))).scalar_one_or_none()
     if not t: raise HTTPException(404, "Task not found")
+    # Second-person rule: approver cannot be the task creator (no self-approval).
+    if t.created_by == user.id:
+        raise HTTPException(status_code=403, detail="Self-approval is not allowed")
     t.status = "queued"
     t.risk_level = payload.get("risk_level", t.risk_level)
     db.add(AuditLog(engagement_id=t.engagement_id, actor=user.email, action="approve_task", target=task_id, result="approved"))
@@ -52,6 +55,8 @@ async def approve(task_id: str, payload: dict, db: AsyncSession = Depends(get_db
 
 @router.post("/tasks/{task_id}/deny")
 async def deny(task_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role not in ("administrator","red_team_lead"):
+        raise HTTPException(status_code=403, detail="Only lead/admin can deny tasks")
     t = (await db.execute(select(Task).where(Task.id==task_id))).scalar_one_or_none()
     if not t: raise HTTPException(404, "Not found")
     t.status = "cancelled"
@@ -61,10 +66,14 @@ async def deny(task_id: str, db: AsyncSession = Depends(get_db), user: User = De
 
 @router.get("/engagements/{eng_id}/audit")
 async def audit(eng_id: str, limit: int = 100, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    limit = max(1, min(int(limit or 100), 1000))
     r = await db.execute(select(AuditLog).where(AuditLog.engagement_id==eng_id).order_by(AuditLog.timestamp.desc()).limit(limit))
     return r.scalars().all()
 
 @router.get("/audit")
 async def audit_global(limit: int = 100, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role not in ("administrator",):
+        raise HTTPException(status_code=403, detail="Only administrators can access global audit")
+    limit = max(1, min(int(limit or 100), 1000))
     r = await db.execute(select(AuditLog).order_by(AuditLog.timestamp.desc()).limit(limit))
     return r.scalars().all()
