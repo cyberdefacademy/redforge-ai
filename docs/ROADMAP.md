@@ -47,4 +47,20 @@ Security tests, perf, isolation, audit verification, k8s
 - Docs: `docs/SECURITY_AUDIT.md`
 - Layout: updated nav (Agents + AD/Cloud/Purple), Docker Compose adds `ollama` service
 
+## Phase 11 — Production Hardening (v1.0.0) ✅
+Secrets hygiene, RBAC/approval gates, sandbox allowlist, deny-by-default scope, full K8s, CI gates
+- Auth: 15m/7d rotation + pooled Redis denylist (fail-closed), throttle, guarded registration, logout revokes both tokens
+- AuthZ: engagement must be authorized to execute; allowlisted updates; second-person approvals; per-engagement kill switch
+- Sandbox: executable allowlist, traversal-safe dirs, secret-stripped env, fused validate→build, strict ports/tuning
+- Infra: prod compose overlay (read-only, cap_drop, healthchecks), `k8s/full-stack.yaml` (PVCs, Redis, migration Job, Ingress+TLS, NetworkPolicy, HPA, PDB), `scripts/backup.sh`, blocking CI (bandit/gitleaks/tsc/compose-lint)
+- Frontend: same-origin API (empty `VITE_API_URL`), hardened nginx CSP, crash-safe auth store
+
+## Phase 12 — Tool Gateway Completion + Live Validation ✅
+Real tool binaries in image (nmap/whatweb/nikto/hydra/sqlmap), WhatWeb `resolv-replace` IPv6 fix, ANSI-safe parsers, `tech` ingest, nikto `tuning` param, scanner risk re-rating
+- Validated live vs local Juice Shop (127.0.0.1:3005): nmap/whatweb/nikto/sqlmap via gateway, 166 findings correlated, technical report generated
+- 52/52 tests pass; GUI screenshots captured in `docs/screenshots/` (16 shots)
+
+## Phase 13 — Follow-ups (planned)
+Go-based tool binaries (nuclei/gobuster/masscan/amass/subfinder/feroxbuster), async job queue for long scans, httpOnly refresh-cookie flow, DB-level audit immutability, engagement membership (multi-tenant BOLA), global rate limiting, MFA/OIDC
+
 Per phase: BUILD → TEST → SECURITY REVIEW → FIX → DOCUMENT → COMMIT

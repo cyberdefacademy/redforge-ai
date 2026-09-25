@@ -1,60 +1,42 @@
-# REDFORGE AI — Database Schema
+# REDFORGE AI — Database Schema (v1.0.0, verified against `backend/app/models/`)
 
-All tables use UUID PKs, created_at/updated_at, foreign keys, engagement isolation.
+Single-database model, UUID PKs. Simplified RBAC: `users.role` string
+(`administrator | red_team_lead | operator | viewer`) — there are **no**
+`roles / permissions / user_roles` tables.
 
-## Core Tables
+## Tables that exist
 
-### users / roles / permissions / user_roles / role_permissions
-- users(id, email, hashed_password, full_name, is_active, mfa_secret, created_at)
-- roles(id, name, description) — Administrator, Red Team Lead, Operator, Analyst, Viewer, Auditor
-- permissions(id, name, resource, action)
+### users
+- `users(id, email, hashed_password, full_name, role, is_active, created_at)` — no MFA columns
 
 ### engagements
-- id, name, customer, description, operator_id, assessment_type, status (draft/authorized/running/paused/completed/archived), start_date, end_date, created_at
-- assessment_type enum: external, internal, web, api, wireless, cloud, ad, network, red_team, purple_team, adversary_simulation, ctf
+- `id, name, customer, description, operator_id → users.id, assessment_type, status (draft/authorized/running/paused/completed/archived), start_date, end_date, created_at`
+- assessment types: external, internal, web, api, wireless, cloud, ad, network, red_team, purple_team, adversary_simulation, ctf
 
 ### authorizations + scope_targets + scope_exclusions
-- authorizations(id, engagement_id, document_url, scope_summary, testing_hours_start, testing_hours_end, emergency_contact, confirmed, confirmed_by, confirmed_at)
-- scope_targets(id, engagement_id, target_type[ cidr/domain/url/ip ], value, description)
-- scope_exclusions(id, engagement_id, exclusion_type, value, reason) — systems, ports, techniques
+- `authorizations(id, engagement_id, scope_summary, emergency_contact, confirmed, confirmed_by, confirmed_at)` (+ document/time-window fields if present in model)
+- `scope_targets(id, engagement_id, target_type[ cidr|domain|url|ip ], value, description)`
+- `scope_exclusions(id, engagement_id, exclusion_type[ system|port|technique ], value, reason)`
 
-### assets / hosts / ports / services / applications
-- assets(id, engagement_id, type, value, source)
-- hosts(id, engagement_id, ip, hostname, os, status)
-- ports(id, host_id, port, protocol, state)
-- services(id, port_id, name, version, banner)
-- applications(id, engagement_id, url, tech_stack, discovered_by)
+### hosts / ports / services
+- `hosts(id, engagement_id, ip, hostname, os, status)`
+- `ports(id, host_id, port, protocol, state)`
+- `services(id, port_id, name, version, banner)`
 
-### vulnerabilities / findings
-- findings(id, engagement_id, title, severity[info/low/medium/high/critical], cvss, cwe, cve, asset_id, service_id, evidence_id, confidence[detected/suspected/validated/confirmed/false_positive], mitre_technique, business_impact, remediation, status)
+### findings
+- `findings(id, engagement_id, title, severity[ info|low|medium|high|critical ], asset, confidence[ detected|suspected|validated ], mitre_technique, status[ open ], ...)`
+- No `cvss/cwe/cve/asset_id/service_id/evidence_id/business_impact/remediation` columns (report layer carries CVE/CVSS text)
 
 ### evidence
-- evidence(id, engagement_id, task_id, tool_run_id, type, file_path, sha256, metadata, created_by)
+- `evidence(id, engagement_id, task_id, type, file_path, sha256, metadata_json, created_at)` — no `tool_run_id/created_by` columns
 
-### credentials
-- credentials(id, engagement_id, type[username/password/hash/token/key], value_encrypted, masked_value, classification, source_finding_id)
+### tools / tasks / audit_logs
+- `tools(id, name, executable, category, risk_level, version, status, ...)` — seeded from registry on boot
+- `tasks(id, engagement_id, type, status[ queued|running|waiting_approval|completed|failed|cancelled ], tool, target, risk_level, created_by)`
+- `audit_logs(id, engagement_id, actor, action, target, tool, result, metadata_json, timestamp)` — append-only by convention (no DB trigger; hardening to add)
 
-### agents / agent_runs
-- agents(id, name, category, model, status)
-- agent_runs(id, engagement_id, agent_id, task_id, input, output, reasoning_summary, started_at, finished_at)
+## Tables that do NOT exist (speculative in older docs — do not rely on them)
+`roles, permissions, user_roles, role_permissions, assets, applications, vulnerabilities (separate), credentials, agents, agent_runs, tool_runs, approvals (separate), attack_paths, mitre_techniques, mitre_mappings, reports, notifications`
 
-### tools / tool_runs
-- tools(id, name, executable, category, risk_level, version, status, config)
-- tool_runs(id, engagement_id, tool_id, task_id, target, arguments, risk_level, approval_id, status, exit_code, stdout, stderr, artifacts, started_at, finished_at)
-
-### tasks / approvals / attack_paths / mitre
-- tasks(id, engagement_id, type, status[queued/running/paused/waiting_approval/completed/failed/cancelled], priority, dependencies, tool, target, risk_level, created_by)
-- approvals(id, task_id, requested_by, risk_level, reason, status[pending/approved/denied], decided_by, decided_at)
-- attack_paths(id, engagement_id, nodes JSONB, edges JSONB, risk_score, mitre_coverage)
-- mitre_techniques(id, tactic, technique_id, name, description)
-- mitre_mappings(id, engagement_id, finding_id, technique_id)
-
-### reports / audit_logs / notifications
-- reports(id, engagement_id, type[executive/technical/narrative], format[pdf/html/md/json/csv], content, generated_by)
-- audit_logs(id, engagement_id, actor, action, target, tool, result, approval_id, timestamp, metadata)
-- notifications(id, engagement_id, event, channel, payload, delivered)
-
-## Indexes
-- engagement_id on all tenant tables
-- GIN on JSONB fields (attack_paths, metadata)
-- Full-text on findings title/description
+## Indexes (recommended, verify in `backend/alembic/versions/`)
+- `engagement_id` on all tenant tables; index on `audit_logs(timestamp)`, `findings(severity)`
